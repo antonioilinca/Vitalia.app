@@ -1,0 +1,9 @@
+{
+  "name": "Vitalia",
+  "description": "Assistant Médical IA Multimodal Full Stack pour triage, analyse et pré-diagnostic.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
