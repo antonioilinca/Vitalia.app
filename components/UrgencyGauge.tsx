@@ -1,10 +1,17 @@
+
+
 import React from 'react';
+import { translations } from '../constants/translations';
+import { Language } from '../types';
 
 interface UrgencyGaugeProps {
   level: number; // 1 to 5
+  language?: Language;
 }
 
-const UrgencyGauge: React.FC<UrgencyGaugeProps> = ({ level }) => {
+const UrgencyGauge: React.FC<UrgencyGaugeProps> = ({ level, language = 'fr' }) => {
+  const t = translations[language].urgency;
+
   const getColor = (lvl: number) => {
     switch (lvl) {
       case 1: return 'bg-emerald-500';
@@ -18,18 +25,18 @@ const UrgencyGauge: React.FC<UrgencyGaugeProps> = ({ level }) => {
 
   const getLabel = (lvl: number) => {
     switch (lvl) {
-      case 1: return 'Non Urgent';
-      case 2: return 'Médecin (72h)';
-      case 3: return 'Médecin (24h)';
-      case 4: return 'SOS Médecin';
-      case 5: return 'URGENCE (15/112)';
+      case 1: return t.l1;
+      case 2: return t.l2;
+      case 3: return t.l3;
+      case 4: return t.l4;
+      case 5: return t.l5;
       default: return 'Inconnu';
     }
   };
 
   return (
     <div className="flex flex-col items-center p-4 bg-white rounded-xl shadow-sm border border-slate-200">
-      <h3 className="text-sm font-semibold text-slate-500 mb-2 uppercase tracking-wide">Niveau d'Urgence</h3>
+      <h3 className="text-sm font-semibold text-slate-500 mb-2 tracking-wide">{t.title}</h3>
       <div className="flex space-x-1 w-full max-w-xs mb-2">
         {[1, 2, 3, 4, 5].map((i) => (
           <div
@@ -41,7 +48,7 @@ const UrgencyGauge: React.FC<UrgencyGaugeProps> = ({ level }) => {
         ))}
       </div>
       <div className={`text-xl font-bold ${level >= 5 ? 'text-red-600' : 'text-slate-800'}`}>
-        Niveau {level} : {getLabel(level)}
+        Level {level} : {getLabel(level)}
       </div>
     </div>
   );

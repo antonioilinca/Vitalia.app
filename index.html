@@ -2,7 +2,7 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Vitalia</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -24,6 +24,54 @@
       }
       ::-webkit-scrollbar-thumb:hover {
         background: #94a3b8; 
+      }
+
+      /* Animations */
+      @keyframes fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes fade-in-up {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes scale-in {
+        from { opacity: 0; transform: scale(0.95); }
+        to { opacity: 1; transform: scale(1); }
+      }
+      @keyframes bounce-slow {
+        0%, 100% { transform: translateY(-5%); }
+        50% { transform: translateY(5%); }
+      }
+      
+      /* Shimmer with pause: Move for 40% of time, pause for 60% */
+      @keyframes shimmer {
+        0% { background-position: -200% center; }
+        40% { background-position: 200% center; }
+        100% { background-position: 200% center; }
+      }
+      
+      .animate-fade-in { animation: fade-in 0.3s ease-out forwards; }
+      .animate-fade-in-up { animation: fade-in-up 0.4s ease-out forwards; }
+      .animate-scale-in { animation: scale-in 0.2s ease-out forwards; }
+      .animate-bounce-slow { animation: bounce-slow 3s infinite ease-in-out; }
+      
+      .text-shimmer {
+        /* Fluo Effect: Dark Slate -> Neon Pink -> Neon Cyan -> Dark Slate */
+        background: linear-gradient(to right, #1e293b 20%, #ff00ff 40%, #00ffff 60%, #1e293b 80%);
+        background-size: 200% auto;
+        color: #1e293b;
+        background-clip: text;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        animation: shimmer 4s linear infinite; /* 4s cycle as requested */
+      }
+
+      /* Prevent auto-zoom on mobile inputs */
+      @media screen and (max-width: 768px) {
+        input, textarea, select, button {
+          font-size: 16px !important;
+        }
       }
     </style>
   <script type="importmap">

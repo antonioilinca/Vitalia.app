@@ -1,69 +1,81 @@
 
-
 import React, { useState, useRef, useEffect } from 'react';
 import { analyzeCase, assessInformationSufficiency, analyzeMedicationImage, analyzeVoiceSample, analyzeBodyMetrics, analyzeVisionSpecialized, analyzeAudioSpecialized, analyzeNutrition } from './services/geminiService';
-import { MedicalAnalysisResponse, FileData, VoiceAnalysisResult, BodyMetrics, BodyAnalysisResult, VisionAnalysisResult, AudioSpecificAnalysisResult, NutritionAnalysisResult, ScannedMedicationResult } from './types';
+import { MedicalAnalysisResponse, FileData, VoiceAnalysisResult, BodyMetrics, BodyAnalysisResult, VisionAnalysisResult, AudioSpecificAnalysisResult, NutritionAnalysisResult, ScannedMedicationResult, Language } from './types';
 import AnalysisResult from './components/AnalysisResult';
 import FirstAidModal from './components/FirstAidModal';
-import ChatBot from './components/ChatBot';
-import { Shield, Mic, Camera, FileText, X, Loader2, Plus, Activity, Pill, Square, Trash2, Lightbulb, ScanLine, Target, Dumbbell, Layers, RefreshCcw, Scale, Eye, Waves, Utensils, Droplets, ArrowRight, Home, User, Baby, Sparkles, Lock, MessageCircleQuestion, BrainCircuit, Calculator, Info, AlertTriangle, Check } from 'lucide-react';
+import LiveConsultation from './components/LiveConsultation';
+import OfflineMode from './components/OfflineMode';
+import { Shield, Mic, Camera, FileText, X, Loader2, Plus, Activity, Pill, Square, Trash2, ScanLine, Target, Dumbbell, Scale, Eye, Waves, Utensils, Droplets, ArrowRight, Home, User, Baby, Sparkles, Lock, MessageCircleQuestion, BrainCircuit, Calculator, Info, AlertTriangle, Check, Globe, Video, Keyboard, RotateCcw, HeartPulse, WifiOff, Send, Paperclip, ChevronUp, Pause, Play, StopCircle, Stethoscope, RefreshCw } from 'lucide-react';
+import { translations } from './constants/translations';
 
 type AppMode = 'adult' | 'child' | 'sport';
 
 const App: React.FC = () => {
+  const [language, setLanguage] = useState<Language>('fr');
+  const t = translations[language];
+
+  // Offline State
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [showOfflineMenu, setShowOfflineMenu] = useState(false);
+
+  // Core Data State
   const [description, setDescription] = useState('');
-  const [additionalInfo, setAdditionalInfo] = useState('');
   const [files, setFiles] = useState<FileData[]>([]);
-  
-  // New States for Features
   const [mode, setMode] = useState<AppMode>('adult');
-  const [currentMeds, setCurrentMeds] = useState('');
+  
+  // Medications State
+  const [currentMeds, setCurrentMeds] = useState(''); // Text input buffer
+  const [medsList, setMedsList] = useState<string[]>([]); // Confirmed text meds
+  const [scannedMedsList, setScannedMedsList] = useState<ScannedMedicationResult[]>([]); // Scanned objects
+
   const [location, setLocation] = useState<{lat: number, lng: number} | undefined>(undefined);
   
+  // Flow State
   const [status, setStatus] = useState<'idle' | 'interviewing' | 'analyzing' | 'done'>('idle');
-  // New state to track which button triggered the analysis
-  const [analysisSource, setAnalysisSource] = useState<'quick' | 'full' | null>(null);
+  const [analysisSource, setAnalysisSource] = useState<'quick' | 'full' | 'live' | null>(null);
 
-  // --- NEW TRIAGE STATE ---
+  // Interview State
   const [interviewQuestions, setInterviewQuestions] = useState<string[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [currentAnswer, setCurrentAnswer] = useState('');
   const [intakeAnswers, setIntakeAnswers] = useState<{question: string, answer: string}[]>([]);
-  const [interviewReason, setInterviewReason] = useState<string>('');
   
+  // Results
   const [result, setResult] = useState<MedicalAnalysisResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [autoPlayResponse, setAutoPlayResponse] = useState(false);
   
-  // Controls visibility of First Aid Modal independently of result status
+  // Modals Visibility
   const [showFirstAid, setShowFirstAid] = useState(false);
-  
-  // Controls the new Suggestion Popup
   const [showSuggestionModal, setShowSuggestionModal] = useState(false);
+  const [showToolsMenu, setShowToolsMenu] = useState(false);
   
+  // Scanning & Tools State
   const fileInputRef = useRef<HTMLInputElement>(null);
   const medScanRef = useRef<HTMLInputElement>(null);
   const [isScanningMeds, setIsScanningMeds] = useState(false);
   
-  // --- SCAN MEDICATION ENRICHED STATE ---
   const [scannedMedResult, setScannedMedResult] = useState<ScannedMedicationResult | null>(null);
   const [showMedScanModal, setShowMedScanModal] = useState(false);
+  const [isViewingMed, setIsViewingMed] = useState(false);
 
-  // Audio Recording State
   const [isRecording, setIsRecording] = useState(false);
   const [isAnalyzingVoice, setIsAnalyzingVoice] = useState(false);
   const [voiceResult, setVoiceResult] = useState<VoiceAnalysisResult | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
 
-  // --- SPECIALIZED MODULES STATES ---
+  // Specialized Modules State
   const [showBodyModal, setShowBodyModal] = useState(false);
   const [showVisionModal, setShowVisionModal] = useState(false);
   const [showAudioModal, setShowAudioModal] = useState(false);
   const [showNutritionModal, setShowNutritionModal] = useState(false);
+  
+  // Live Consultation State: 'audio' or 'video' or null (closed)
+  const [liveMode, setLiveMode] = useState<'audio' | 'video' | null>(null);
 
-  // New states for Audio Spec Recording UX
   const [isAudioSpecRecording, setIsAudioSpecRecording] = useState(false);
-  const [audioCountdown, setAudioCountdown] = useState(5);
+  const [audioTimer, setAudioTimer] = useState(0); // 0 to 30
 
   const [bodyMetrics, setBodyMetrics] = useState<BodyMetrics>({ 
       age: '', 
@@ -71,10 +83,12 @@ const App: React.FC = () => {
       poids: '', 
       taille: '', 
       activite: 'actif', 
-      frequence_sport: '3-4 jours/semaine',
+      frequence_sport: '3-4',
       objectif: 'maintien',
       tabac: false 
   });
+  const [bodyPhoto, setBodyPhoto] = useState<File | null>(null);
+  const bodyPhotoInputRef = useRef<HTMLInputElement>(null);
   
   const [bodyResult, setBodyResult] = useState<BodyAnalysisResult | null>(null);
   const [visionResult, setVisionResult] = useState<VisionAnalysisResult | null>(null);
@@ -83,18 +97,56 @@ const App: React.FC = () => {
   
   const [isProcessingSpec, setIsProcessingSpec] = useState(false);
 
-  // Vision Module Refs
   const visionInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Flip state for previews
+  const [flippedFiles, setFlippedFiles] = useState<Record<number, boolean>>({});
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
+    }
+  }, [description]);
 
   useEffect(() => {
-    // Auto-request location for Emergency Maps features
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
         (err) => console.log("Geolocation denied or error", err)
       );
     }
+
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
+
+  const toggleLanguage = () => {
+    setLanguage(prev => {
+        if (prev === 'fr') return 'en';
+        if (prev === 'en') return 'ro';
+        return 'fr';
+    });
+  };
+
+  const toggleFileFlip = (index: number) => {
+    setFlippedFiles(prev => ({
+        ...prev,
+        [index]: !prev[index]
+    }));
+  };
+
+  // --- Handlers ---
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -104,24 +156,26 @@ const App: React.FC = () => {
         type: file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'pdf'
       }));
       setFiles(prev => [...prev, ...newFiles]);
+      setShowToolsMenu(false);
     }
-    // Reset input to allow selecting the same file again if needed
     if (e.target) e.target.value = '';
   };
 
-  // OCR Medication Scan Handler
   const handleMedScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       setIsScanningMeds(true);
-      setScannedMedResult(null); // Reset prev result
+      setScannedMedResult(null); 
+      setIsViewingMed(false);
+      setShowToolsMenu(false);
+      setShowMedScanModal(true);
       try {
-        const medInfo = await analyzeMedicationImage(file);
+        const medInfo = await analyzeMedicationImage(file, language);
         setScannedMedResult(medInfo);
-        setShowMedScanModal(true);
       } catch (err) {
         console.error("Scan error", err);
-        alert("Impossible d'analyser le médicament. Assurez-vous que l'image est nette.");
+        alert("Error scanning medication. Ensure image is clear.");
+        setShowMedScanModal(false);
       } finally {
         setIsScanningMeds(false);
         e.target.value = '';
@@ -131,310 +185,190 @@ const App: React.FC = () => {
   
   const confirmScannedMedication = () => {
     if (scannedMedResult) {
-        setCurrentMeds(prev => prev ? `${prev}, ${scannedMedResult.nom}` : scannedMedResult.nom);
+        if (scannedMedsList.length >= 10) {
+            alert("Maximum 10 medications allowed.");
+            return;
+        }
+        setScannedMedsList(prev => [...prev, scannedMedResult]);
         setShowMedScanModal(false);
         setScannedMedResult(null);
     }
   };
 
-  // --- ROBUST AUDIO RECORDING UTILS ---
-  const getSupportedMimeType = () => {
-    const types = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/mp4', // Safari 
-      'audio/ogg;codecs=opus',
-      'audio/wav'
-    ];
-    for (const type of types) {
-      if (MediaRecorder.isTypeSupported(type)) return type;
-    }
-    return ''; // let browser decide default
-  };
-
-  const startRecording = async () => {
-    setVoiceResult(null); // Reset previous voice result
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const options = getSupportedMimeType() ? { mimeType: getSupportedMimeType() } : undefined;
-      const mediaRecorder = new MediaRecorder(stream, options);
-      
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        const mimeType = mediaRecorder.mimeType || 'audio/webm';
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        // Use correct extension based on mime
-        const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('wav') ? 'wav' : 'webm';
-        const audioFile = new File([audioBlob], `analyse_vocale.${ext}`, { type: mimeType });
-        
-        const newFile: FileData = {
-            file: audioFile,
-            preview: URL.createObjectURL(audioBlob),
-            type: 'audio'
-        };
-        setFiles(prev => [...prev, newFile]);
-        
-        // Clean up tracks
-        stream.getTracks().forEach(track => track.stop());
-
-        // IMMEDIATE VOICE ANALYSIS
-        setIsAnalyzingVoice(true);
-        try {
-            const vResult = await analyzeVoiceSample(audioFile);
-            setVoiceResult(vResult);
-            if (vResult.transcription && vResult.transcription.trim().length > 2) {
-                setDescription(prev => {
-                    if (prev.includes(vResult.transcription)) return prev;
-                    const separator = prev ? "\n\n" : "";
-                    return `${prev}${separator}[Transcription Vocale]: ${vResult.transcription}`;
-                });
-            }
-        } catch (e) {
-            console.error("Voice Analysis Failed", e);
-        } finally {
-            setIsAnalyzingVoice(false);
-        }
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-    } catch (err) {
-      console.error("Mic Error", err);
-      setError("Impossible d'accéder au micro. Vérifiez vos permissions.");
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-    }
+  const handleRemoveMed = (index: number) => {
+    setScannedMedsList(prev => prev.filter((_, i) => i !== index));
   };
 
   const removeFile = (index: number) => {
     setFiles(prev => prev.filter((_, i) => i !== index));
+    setFlippedFiles(prev => {
+        const newState = {...prev};
+        delete newState[index];
+        return newState;
+    });
   };
 
-  // --- SPECIALIZED MODULES HANDLERS ---
-  
+  // --- Specialized Modules Handlers --- 
+  const handleBodyPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (e.target.files && e.target.files.length > 0) {
+          setBodyPhoto(e.target.files[0]);
+      }
+  };
+
   const handleBodyAnalysis = async () => {
+    if(!bodyMetrics.poids || !bodyMetrics.taille || !bodyMetrics.age) return;
     setIsProcessingSpec(true);
     try {
-      const res = await analyzeBodyMetrics(bodyMetrics, mode);
+      const res = await analyzeBodyMetrics(bodyMetrics, mode, language, bodyPhoto || undefined);
       setBodyResult(res);
-      // Inject result into description for global context
-      setDescription(prev => `${prev}\n\n[Données Corporelles]: IMC ${res.imc}, Santé ${res.score_sante_global}/100. ${res.interpretation}`);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsProcessingSpec(false);
-    }
+      setDescription(prev => `${prev}\n[Body Profile]: Age ${bodyMetrics.age}, BMI ${res.imc}.`);
+    } catch (e) { console.error(e); } finally { setIsProcessingSpec(false); }
   };
 
   const handleNutritionAnalysis = async () => {
+    if(!bodyMetrics.poids || !bodyMetrics.taille || !bodyMetrics.age) return;
     setIsProcessingSpec(true);
     try {
-      const res = await analyzeNutrition(bodyMetrics);
+      const res = await analyzeNutrition(bodyMetrics, language);
       setNutritionResult(res);
-      setDescription(prev => `${prev}\n\n[Nutrition]: Besoin ${res.besoin_calorique_journalier} kcal. Eau ${res.eau_litres}.`);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsProcessingSpec(false);
-    }
+      setDescription(prev => `${prev}\n[Nutrition]: Needs ${res.besoin_calorique_journalier} kcal/day.`);
+    } catch (e) { console.error(e); } finally { setIsProcessingSpec(false); }
   };
 
   const handleVisionUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
-      // Basic size check (optional but good practice)
-      if (file.size > 20 * 1024 * 1024) {
-         alert("Fichier trop volumineux. Max 20Mo.");
-         e.target.value = '';
-         return;
-      }
-      
       setIsProcessingSpec(true);
       try {
-        const res = await analyzeVisionSpecialized(file, mode);
+        const res = await analyzeVisionSpecialized(file, mode, language);
         setVisionResult(res);
-        setDescription(prev => `${prev}\n\n[Vision IA]: Gravité ${res.score_gravite}/5. ${res.signes_cutanes}. ${res.respiration_visuelle}`);
-      } catch (e) { 
-        console.error("Vision Error", e);
-        alert("Erreur lors de l'analyse vidéo/image. Réessayez.");
-      } finally { 
-        setIsProcessingSpec(false); 
-        e.target.value = ''; // Reset input
-      }
+        setDescription(prev => `${prev}\n[Vision Analysis]: ${res.signes_cutanes} (Score ${res.score_gravite}/5)`);
+      } catch (e) { console.error(e); alert("Error"); } finally { setIsProcessingSpec(false); e.target.value = ''; }
     }
   };
 
   const handleAudioSpecRecord = async () => {
-    // Reset previous result
     setAudioSpecResult(null);
-
+    setAudioTimer(0);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const options = getSupportedMimeType() ? { mimeType: getSupportedMimeType() } : undefined;
-      const mediaRecorder = new MediaRecorder(stream, options);
+      // Use advanced audio constraints for analysis quality
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true
+          } 
+      });
+      
+      const mediaRecorder = new MediaRecorder(stream);
       let chunks: Blob[] = [];
-
       setIsAudioSpecRecording(true);
-      setAudioCountdown(5);
+      mediaRecorderRef.current = mediaRecorder; 
 
-      // Countdown Timer
-      const timerInterval = setInterval(() => {
-        setAudioCountdown(prev => {
-           if (prev <= 1) return 0;
-           return prev - 1;
-        });
-      }, 1000);
-
-      mediaRecorder.ondataavailable = e => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
+      mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
       
       mediaRecorder.onstop = async () => {
-        clearInterval(timerInterval);
         setIsAudioSpecRecording(false);
-        
-        const mimeType = mediaRecorder.mimeType || 'audio/webm';
-        const blob = new Blob(chunks, { type: mimeType });
-        const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
-        const file = new File([blob], `spec_audio.${ext}`, { type: mimeType });
-        
+        const file = new File([new Blob(chunks)], "spec_audio_analysis.webm", { type: 'audio/webm' });
         setIsProcessingSpec(true);
         try {
-          const res = await analyzeAudioSpecialized(file, mode);
+          const res = await analyzeAudioSpecialized(file, mode, language);
           setAudioSpecResult(res);
-          setDescription(prev => `${prev}\n\n[Audio IA]: Stress ${res.score_stress}. Respiration ${res.rythme_respiratoire}.`);
-        } catch (e) { 
-            console.error(e);
-            alert("Impossible d'analyser l'audio. Veuillez parler clairement.");
-        } finally { 
-            setIsProcessingSpec(false); 
-        }
-        
+          setDescription(prev => `${prev}\n[Audio Analysis]: Stress Level ${res.score_stress}`);
+        } catch (e) { console.error(e); } finally { setIsProcessingSpec(false); }
         stream.getTracks().forEach(t => t.stop());
       };
       
       mediaRecorder.start();
       
-      // Safe timeout stop
-      setTimeout(() => {
-         if (mediaRecorder.state === 'recording') {
-            mediaRecorder.stop();
+      // Timer Logic with 30s limit
+      let seconds = 0;
+      const interval = setInterval(() => {
+         seconds++;
+         setAudioTimer(seconds);
+         if(seconds >= 30) {
+             clearInterval(interval);
+             if(mediaRecorder.state === 'recording') mediaRecorder.stop();
          }
-      }, 5000); 
+      }, 1000);
+
+      (mediaRecorder as any).timerInterval = interval;
 
     } catch (e) { 
-        console.error("Spec Audio Error", e); 
-        alert("Accès micro refusé ou erreur technique.");
-        setIsAudioSpecRecording(false);
+        console.error("Audio record error:", e);
+        setError("Erreur microphone.");
+        setIsAudioSpecRecording(false); 
     }
   };
 
+  const stopAudioSpecRecordEarly = () => {
+      if(mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          clearInterval((mediaRecorderRef.current as any).timerInterval);
+          mediaRecorderRef.current.stop();
+      }
+  };
 
-  // --- MAIN ANALYSIS LOGIC ---
+  // --- Main Analysis Logic ---
 
-  const executeAnalysis = async (currentDesc: string) => {
+  const executeAnalysis = async (currentDesc: string, isFull: boolean) => {
     setStatus('analyzing'); 
     setError(null);
+    setShowToolsMenu(false);
 
     try {
-      const intakeCheck = await assessInformationSufficiency(currentDesc, mode);
-      
-      if (intakeCheck.status === 'more_info_needed') {
-         // Start Conversational Interview
-         const questions = intakeCheck.questions || ["Pouvez-vous préciser vos symptômes ?", "Depuis quand ?", "Âge et Sexe ?"];
-         setInterviewQuestions(questions);
-         setInterviewReason(intakeCheck.raison || "Informations insuffisantes pour une analyse sûre.");
-         
-         // Initialize conversational state
-         setCurrentQuestionIndex(0);
-         setCurrentAnswer('');
-         setIntakeAnswers([]);
-         setStatus('interviewing'); 
-         setError(null);
-         return; 
+      if (!isFull) {
+          const intakeCheck = await assessInformationSufficiency(currentDesc, mode, language);
+          if (intakeCheck.status === 'more_info_needed') {
+             setInterviewQuestions(intakeCheck.questions || ["Précisez les symptômes?"]);
+             setCurrentQuestionIndex(0);
+             setCurrentAnswer('');
+             setIntakeAnswers([]);
+             setStatus('interviewing'); 
+             return; 
+          }
       }
-      
       await performFullAnalysis(currentDesc);
-
     } catch (err) {
       console.error(err);
       await performFullAnalysis(currentDesc);
     }
   };
 
-  const handleQuickAnalysis = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const textLength = description.trim().split(/\s+/).length;
-    if (textLength < 3) {
-      setError("Veuillez décrire vos symptômes plus précisément avant d'analyser.");
-      return;
-    }
-    setAnalysisSource('quick');
-    executeAnalysis(description);
-  };
-
-  const handleFullAnalysis = (e: React.MouseEvent) => {
-    e.preventDefault();
+  const handleSendMessage = () => {
+    if (!description.trim() && files.length === 0 && scannedMedsList.length === 0) return;
     
-    const hasText = description.trim().length > 0;
-    const hasFiles = files.length > 0;
-    const hasMeds = currentMeds.trim().length > 0;
+    setAutoPlayResponse(false); // Manual send does not auto-play audio
 
-    if (!hasText) {
-        setError("La description des symptômes est manquante.");
-        return;
+    // Smart logic: if we have files/meds OR a long description, treat as full analysis request.
+    const isRichData = files.length > 0 || scannedMedsList.length > 0 || medsList.length > 0;
+    const isLongText = description.split(/\s+/).length > 5;
+    
+    if (isRichData) {
+        setAnalysisSource('full');
+        executeAnalysis(description, true);
+    } else {
+        setAnalysisSource('quick');
+        executeAnalysis(description, false);
     }
-
-    if (!hasFiles || !hasMeds) {
-        setError("Pour l'analyse COMPLÈTE, remplissez Photos & Traitements. Sinon utilisez 'Analyser les symptômes'.");
-        return;
-    }
-
-    setAnalysisSource('full');
-    executeAnalysis(description);
   };
 
-  // --- NEW: CONVERSATIONAL ANSWER HANDLER ---
   const handleNextQuestion = () => {
     if (!currentAnswer.trim()) return;
-
     const newAnswers = [...intakeAnswers, { question: interviewQuestions[currentQuestionIndex], answer: currentAnswer }];
     setIntakeAnswers(newAnswers);
-    
     if (currentQuestionIndex < interviewQuestions.length - 1) {
-       // Go to next question
        setCurrentQuestionIndex(prev => prev + 1);
        setCurrentAnswer('');
     } else {
-       // Finish Interview
        finishInterview(newAnswers);
     }
   };
 
   const finishInterview = async (answers: {question: string, answer: string}[]) => {
-     // Compile all Q&A into description
      let transcript = "";
-     answers.forEach(item => {
-        transcript += `\n[Q: ${item.question} -> R: ${item.answer}]`;
-     });
-     
-     const combinedDescription = `${description}\n\n[Précisions via Triage]:${transcript}`;
+     answers.forEach(item => transcript += `\n[Q: ${item.question} -> R: ${item.answer}]`);
+     const combinedDescription = `${description}\n\n[Triage]:${transcript}`;
      setDescription(combinedDescription);
-     
-     // Launch Analysis
      await performFullAnalysis(combinedDescription);
   };
 
@@ -446,33 +380,50 @@ const App: React.FC = () => {
 
     try {
       const fileObjects = files.map(f => f.file);
-      const data = await analyzeCase(finalDescription, fileObjects, mode, currentMeds, location);
+      let combinedMeds = medsList.join(', ');
+      if (currentMeds.trim()) combinedMeds += `, ${currentMeds}`; // include unsaved text input
+      if (scannedMedsList.length > 0) {
+        const scannedNames = scannedMedsList.map(m => `${m.nom} (${m.usage_principal})`).join(', ');
+        combinedMeds = combinedMeds ? `${combinedMeds}, ${scannedNames}` : scannedNames;
+      }
+      
+      const data = await analyzeCase(finalDescription, fileObjects, mode, combinedMeds, language, location);
       setResult(data);
       setStatus('done');
       
-      if (data.niveau_urgence.code === 5) {
-        setShowFirstAid(true);
-      } else {
-        // Show suggestions if not critical
-        setShowSuggestionModal(true);
-      }
+      if (data.niveau_urgence.code === 5) setShowFirstAid(true);
+      else setShowSuggestionModal(true);
 
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      // window.scrollTo({ top: 0, behavior: 'smooth' }); // Stay at bottom for chat feel? No, scroll to result.
     } catch (err) {
       console.error(err);
-      setError("Erreur lors de l'analyse. Vérifiez votre connexion.");
+      setError("Erreur analyse.");
       setStatus('idle');
     }
+  };
+
+  const handleLiveConsultationClose = (transcript?: string) => {
+    setLiveMode(null);
+    if (!transcript || transcript.trim().split(/\s+/).length < 6) {
+        // Only show feedback if transcription was empty or very short, usually implies instant close
+        // But if user just closed without talking, maybe don't trigger anything.
+        // setShowLiveFeedbackModal(true); 
+        return;
+    }
+    const fullDescription = description ? `${description}\n\n[LIVE]:\n${transcript}` : `[LIVE]:\n${transcript}`;
+    setDescription(fullDescription);
+    setAnalysisSource('live');
+    performFullAnalysis(fullDescription);
   };
 
   const resetAnalysis = () => {
     setResult(null);
     setFiles([]);
     setDescription('');
-    setAdditionalInfo('');
     setInterviewQuestions([]);
     setCurrentMeds('');
-    setMode('adult');
+    setMedsList([]);
+    setScannedMedsList([]);
     setStatus('idle');
     setAnalysisSource(null);
     setError(null);
@@ -480,731 +431,583 @@ const App: React.FC = () => {
     setVoiceResult(null);
     setShowFirstAid(false);
     setShowSuggestionModal(false);
-    
-    // Reset Specs
     setBodyResult(null);
     setVisionResult(null);
     setAudioSpecResult(null);
     setNutritionResult(null);
-    
-    // Reset Triage
-    setCurrentQuestionIndex(0);
-    setCurrentAnswer('');
-    setIntakeAnswers([]);
+    setShowToolsMenu(false);
+    setAutoPlayResponse(false);
+    setBodyPhoto(null);
   };
 
-  const handleCloseFirstAid = () => {
-    setShowFirstAid(false);
+  const addMedFromInput = () => {
+    if (currentMeds.trim()) {
+        if(medsList.length + scannedMedsList.length >= 10) {
+             alert("Limit 10 meds");
+             return;
+        }
+        setMedsList(prev => [...prev, currentMeds.trim()]);
+        setCurrentMeds('');
+    }
   };
 
-  const canLaunchFullAnalysis = files.length > 0 && currentMeds.trim().length > 0 && description.trim().length > 0;
+  // --- Renderers ---
 
-  // Calculate progress for intake
-  const intakeProgress = interviewQuestions.length > 0 
-    ? ((currentQuestionIndex + 1) / interviewQuestions.length) * 100 
-    : 0;
+  const renderToolsMenu = () => (
+    <div className={`absolute bottom-full left-4 mb-4 bg-white/90 backdrop-blur-xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-3xl p-4 w-[calc(100%-2rem)] max-w-sm grid grid-cols-4 gap-4 animate-fade-in-up origin-bottom-left z-[70]`}>
+       <button onClick={() => setLiveMode('video')} className="col-span-4 bg-gradient-to-r from-pink-500 to-rose-500 text-white p-4 rounded-2xl flex items-center justify-center gap-3 shadow-lg shadow-pink-500/30 hover:shadow-xl hover:-translate-y-1 transition-all">
+           <Video size={24} />
+           <span className="font-bold">{translations[language].live.title}</span>
+       </button>
 
-  // STRICT DARK MODE INPUT STYLE (WHITE TEXT ON BLACK BACKGROUND)
-  const darkInputClass = "p-3 border border-slate-700 rounded-xl bg-slate-900 text-white placeholder-slate-500 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 outline-none transition-all";
+       <button onClick={() => medScanRef.current?.click()} className="col-span-2 flex flex-col items-center gap-2 p-3 bg-indigo-50 hover:bg-indigo-100 rounded-2xl text-indigo-700 transition-all shadow-md shadow-indigo-100/50 hover:-translate-y-1">
+           <Pill size={24} />
+           <span className="text-xs font-bold text-center">{t.medications.scan_btn}</span>
+       </button>
+       <button onClick={() => fileInputRef.current?.click()} className="col-span-2 flex flex-col items-center gap-2 p-3 bg-teal-50 hover:bg-teal-100 rounded-2xl text-teal-700 transition-all shadow-md shadow-teal-100/50 hover:-translate-y-1">
+           <Camera size={24} />
+           <span className="text-xs font-bold text-center">Photo/Doc</span>
+       </button>
+
+       <div className="col-span-4 h-px bg-slate-100 my-1"></div>
+
+       <button onClick={() => {setShowToolsMenu(false); setShowBodyModal(true);}} className="flex flex-col items-center gap-2 p-2 hover:bg-slate-100 rounded-xl text-slate-600 transition-all hover:-translate-y-0.5">
+           <Scale size={20} />
+           <span className="text-[10px] font-bold">Corps</span>
+       </button>
+       <button onClick={() => {setShowToolsMenu(false); setShowNutritionModal(true);}} className="flex flex-col items-center gap-2 p-2 hover:bg-slate-100 rounded-xl text-slate-600 transition-all hover:-translate-y-0.5">
+           <Utensils size={20} />
+           <span className="text-[10px] font-bold">Nutri</span>
+       </button>
+       <button onClick={() => {setShowToolsMenu(false); setShowVisionModal(true);}} className="flex flex-col items-center gap-2 p-2 hover:bg-slate-100 rounded-xl text-slate-600 transition-all hover:-translate-y-0.5">
+           <Eye size={20} />
+           <span className="text-[10px] font-bold">Vision</span>
+       </button>
+       <button onClick={() => {setShowToolsMenu(false); setShowAudioModal(true);}} className="flex flex-col items-center gap-2 p-2 hover:bg-slate-100 rounded-xl text-slate-600 transition-all hover:-translate-y-0.5">
+           <Waves size={20} />
+           <span className="text-[10px] font-bold">Audio</span>
+       </button>
+
+       {/* Hidden Inputs */}
+       <input type="file" ref={medScanRef} accept="image/*" className="hidden" onChange={handleMedScan} />
+       <input type="file" ref={fileInputRef} multiple accept="image/*,video/*,audio/*,.pdf" className="hidden" onChange={handleFileChange} />
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-12 font-sans text-slate-900">
+    <div className="flex flex-col h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden">
       
-      {/* --- MODALS FOR SPECIALIZED MODULES --- */}
+      {/* --- Overlays & Modals --- */}
+      {(showOfflineMenu || !isOnline) && <OfflineMode language={language} onClose={() => setShowOfflineMenu(false)} forced={!isOnline} />}
+      {liveMode && <LiveConsultation onClose={handleLiveConsultationClose} language={language} mode={liveMode} />}
+      {showFirstAid && result?.premiers_secours_steps && <FirstAidModal steps={result.premiers_secours_steps} onClose={() => setShowFirstAid(false)} language={language}/>}
       
-      {/* 5. MEDICATION SCAN MODAL (NEW) */}
-      {showMedScanModal && scannedMedResult && (
-         <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto animate-fade-in-up shadow-2xl">
-               <div className="flex justify-between items-start mb-4 border-b border-slate-100 pb-4">
-                 <div>
-                    <h3 className="text-xl font-bold flex items-center gap-2 text-slate-800"><Pill className="text-teal-600"/> Infos Médicament</h3>
-                    <p className="text-xs text-slate-400 mt-1">Analyse visuelle par Gemini IA</p>
+      {/* 1. Medication Scanner Modal */}
+      {showMedScanModal && (
+         <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6">
+             <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl animate-fade-in-up border border-indigo-50 relative flex flex-col z-[100] max-h-[80vh] overflow-hidden">
+                 <div className="absolute top-4 right-4 z-20">
+                    <button onClick={() => setShowMedScanModal(false)} className="p-2 bg-slate-100/50 hover:bg-slate-100 rounded-full text-slate-500 transition-colors">
+                        <X size={20} />
+                    </button>
                  </div>
-                 <button onClick={() => setShowMedScanModal(false)} className="bg-slate-50 p-2 rounded-full hover:bg-slate-100"><X size={20} className="text-slate-600"/></button>
-               </div>
-               
-               <div className="space-y-4">
-                  <div className="bg-teal-50 p-4 rounded-2xl border border-teal-100">
-                     <span className="text-xs font-bold text-teal-600 uppercase">Médicament Identifié</span>
-                     <div className="text-xl font-bold text-teal-900 mt-1">{scannedMedResult.nom}</div>
-                  </div>
-
-                  <div className="flex gap-2 items-start">
-                     <Info className="text-blue-500 mt-1 flex-shrink-0" size={20}/>
-                     <div>
-                        <span className="text-sm font-bold text-slate-700">Description</span>
-                        <p className="text-sm text-slate-600 leading-snug">{scannedMedResult.description}</p>
-                     </div>
-                  </div>
-
-                  <div>
-                     <span className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-2"><Check size={16} className="text-green-500"/> Conseils d'utilisation</span>
-                     <ul className="space-y-2">
-                        {scannedMedResult.conseils.map((conseil, i) => (
-                           <li key={i} className="text-sm bg-slate-50 p-2 rounded-lg text-slate-700 border border-slate-100">
-                              {conseil}
-                           </li>
-                        ))}
-                     </ul>
-                  </div>
-
-                  {scannedMedResult.avertissements && (
-                     <div className="bg-amber-50 p-3 rounded-xl border border-amber-100 flex gap-3">
-                        <AlertTriangle className="text-amber-600 flex-shrink-0" size={20}/>
-                        <div>
-                           <span className="text-xs font-bold text-amber-600 uppercase">Attention</span>
-                           <p className="text-sm text-amber-800 leading-snug">{scannedMedResult.avertissements}</p>
+                 
+                 <div className="overflow-y-auto p-6 h-full custom-scrollbar">
+                    {isScanningMeds ? (
+                        <div className="flex flex-col items-center py-12">
+                           <Pill size={48} className="text-indigo-500 animate-bounce mb-6"/>
+                           <Loader2 className="animate-spin text-slate-400" size={24}/>
+                           <p className="mt-4 text-slate-600 font-medium text-center">Analyse du médicament...</p>
                         </div>
-                     </div>
-                  )}
-                  
-                  <div className="pt-2 flex gap-3">
-                      <button onClick={() => setShowMedScanModal(false)} className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl transition">
-                         Annuler
-                      </button>
-                      <button onClick={confirmScannedMedication} className="flex-[2] py-3 bg-teal-600 text-white font-bold rounded-xl hover:bg-teal-700 shadow-md transition flex items-center justify-center gap-2">
-                         <Plus size={18}/> Ajouter au traitement
-                      </button>
-                  </div>
-               </div>
-            </div>
+                     ) : scannedMedResult ? (
+                        <>
+                         <div className="flex items-start gap-4 mb-4 mt-2">
+                            <div className="p-3 bg-indigo-100 rounded-2xl text-indigo-600">
+                               <Pill size={32} />
+                            </div>
+                            <div>
+                               <h3 className="text-xl font-bold text-slate-900 leading-tight">{scannedMedResult.nom}</h3>
+                               <p className="text-sm text-indigo-600 font-medium mt-1">{scannedMedResult.usage_principal}</p>
+                            </div>
+                         </div>
+                         <div className="bg-slate-50 p-4 rounded-xl text-sm text-slate-600 mb-6 border border-slate-100">
+                            <p className="mb-2"><strong>Détails:</strong> {scannedMedResult.description}</p>
+                            {scannedMedResult.avertissements && <p className="text-amber-600"><strong>⚠️ {scannedMedResult.avertissements}</strong></p>}
+                         </div>
+                         <div className="flex gap-2 pb-2">
+                             <button onClick={() => setShowMedScanModal(false)} className="flex-1 py-3 bg-slate-100 rounded-xl font-bold text-slate-600 hover:bg-slate-200 transition-all">{t.modals.med_cancel}</button>
+                             <button onClick={confirmScannedMedication} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-500/30 hover:-translate-y-0.5 transition-all">{t.modals.med_add}</button>
+                         </div>
+                        </>
+                     ) : null}
+                 </div>
+             </div>
          </div>
       )}
-      
-      {/* 1. Body Modal */}
+
+      {/* 2. Body Metrics Modal (Full Form) - CENTERED & SCROLLABLE */}
       {showBodyModal && (
-        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
-             <div className="flex justify-between items-center mb-4">
-               <h3 className="text-xl font-bold flex items-center gap-2"><Scale className="text-teal-600"/> Analyse Corporelle</h3>
-               <button onClick={() => setShowBodyModal(false)}><X size={24}/></button>
-             </div>
+         <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-4 sm:p-6">
+           <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl flex flex-col max-h-[80vh] relative animate-fade-in-up overflow-hidden z-[100]">
              
-             {!bodyResult ? (
-               <div className="space-y-3">
-                 <div className="grid grid-cols-2 gap-3">
-                    <input type="number" placeholder="Âge" className={darkInputClass} value={bodyMetrics.age} onChange={e => setBodyMetrics({...bodyMetrics, age: e.target.value})} />
-                    <select className={darkInputClass} value={bodyMetrics.sexe} onChange={e => setBodyMetrics({...bodyMetrics, sexe: e.target.value as any})}>
-                      <option value="homme">Homme</option>
-                      <option value="femme">Femme</option>
-                    </select>
-                 </div>
-                 <div className="grid grid-cols-2 gap-3">
-                    <input type="number" placeholder="Poids (kg)" className={darkInputClass} value={bodyMetrics.poids} onChange={e => setBodyMetrics({...bodyMetrics, poids: e.target.value})} />
-                    <input type="number" placeholder="Taille (cm)" className={darkInputClass} value={bodyMetrics.taille} onChange={e => setBodyMetrics({...bodyMetrics, taille: e.target.value})} />
-                 </div>
-                 <select className={`w-full ${darkInputClass}`} value={bodyMetrics.activite} onChange={e => setBodyMetrics({...bodyMetrics, activite: e.target.value as any})}>
-                    <option value="sedentaire">Sédentaire (Peu d'exercice)</option>
-                    <option value="actif">Actif (1-3 fois/semaine)</option>
-                    <option value="sportif">Sportif (3-5 fois/semaine)</option>
-                 </select>
-                 <label className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl">
-                    <input type="checkbox" checked={bodyMetrics.tabac} onChange={e => setBodyMetrics({...bodyMetrics, tabac: e.target.checked})} />
-                    <span>Fumeur ?</span>
-                 </label>
-                 <button onClick={handleBodyAnalysis} disabled={isProcessingSpec} className="w-full bg-teal-600 text-white py-3 rounded-xl font-bold flex justify-center hover:bg-teal-700 transition">
-                    {isProcessingSpec ? <Loader2 className="animate-spin"/> : "Calculer & Analyser"}
-                 </button>
-               </div>
-             ) : (
-               <div className="bg-slate-50 rounded-2xl p-4 space-y-3">
-                  <div className="flex justify-between items-center border-b pb-2">
-                    <span className="text-slate-500">IMC</span>
-                    <span className="text-2xl font-bold text-teal-700">{bodyResult.imc.toFixed(1)}</span>
-                  </div>
-                  <div className="text-sm">{bodyResult.interpretation}</div>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                     <div className="bg-white p-2 rounded">Cardio: {bodyResult.risque_cardio}</div>
-                     <div className="bg-white p-2 rounded">Diabète: {bodyResult.risque_diabete}</div>
-                  </div>
-                  <div className="text-xs text-slate-400 mt-2">Données ajoutées à l'analyse globale.</div>
-               </div>
-             )}
-          </div>
-        </div>
-      )}
+             {/* Sticky Close Button */}
+             <div className="absolute top-4 right-4 z-20">
+                <button onClick={() => setShowBodyModal(false)} className="p-2 bg-slate-100/80 hover:bg-slate-200 rounded-full text-slate-500 transition-colors">
+                    <X size={20} />
+                </button>
+             </div>
 
-      {/* 4. Nutrition Modal (NEW) */}
-      {showNutritionModal && (
-        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
-             <div className="flex justify-between items-center mb-4">
-               <h3 className="text-xl font-bold flex items-center gap-2"><Utensils className="text-lime-600"/> Analyse Alimentation</h3>
-               <button onClick={() => setShowNutritionModal(false)}><X size={24}/></button>
-             </div>
-             
-             {!nutritionResult ? (
-               <div className="space-y-3 animate-fade-in">
-                 <p className="text-sm text-slate-500 mb-2">Calculateur de calories et macros précis.</p>
-                 
-                 <div className="grid grid-cols-2 gap-3">
-                    <input type="number" placeholder="Âge" className={darkInputClass} value={bodyMetrics.age} onChange={e => setBodyMetrics({...bodyMetrics, age: e.target.value})} />
-                    <select className={darkInputClass} value={bodyMetrics.sexe} onChange={e => setBodyMetrics({...bodyMetrics, sexe: e.target.value as any})}>
-                      <option value="homme">Homme</option>
-                      <option value="femme">Femme</option>
-                    </select>
+             {/* Scrollable Area */}
+             <div className="overflow-y-auto p-6 sm:p-8 custom-scrollbar h-full">
+                 <div className="flex items-center gap-2 mb-6">
+                    <Scale className="text-teal-600"/>
+                    <h3 className="font-bold text-lg">{t.modals.body_title}</h3>
                  </div>
                  
-                 <div className="grid grid-cols-2 gap-3">
-                    <input type="number" placeholder="Poids (kg)" className={darkInputClass} value={bodyMetrics.poids} onChange={e => setBodyMetrics({...bodyMetrics, poids: e.target.value})} />
-                    <input type="number" placeholder="Taille (cm)" className={darkInputClass} value={bodyMetrics.taille} onChange={e => setBodyMetrics({...bodyMetrics, taille: e.target.value})} />
-                 </div>
-
-                 {/* NEW GOAL SELECTOR */}
-                 <div className="p-3 border rounded-xl bg-slate-50">
-                    <label className="text-xs font-bold text-slate-500 uppercase mb-2 block flex items-center gap-2"><Target size={14}/> Votre Objectif</label>
-                    <div className="flex gap-2">
-                       {['perte', 'maintien', 'prise'].map((obj) => (
-                           <button 
-                             key={obj}
-                             onClick={() => setBodyMetrics({...bodyMetrics, objectif: obj as any})}
-                             className={`flex-1 py-2 rounded-lg text-xs font-bold capitalize transition-colors ${bodyMetrics.objectif === obj ? 'bg-lime-500 text-white shadow-sm' : 'bg-slate-900 text-white border border-slate-700 opacity-60 hover:opacity-100'}`}
-                           >
-                             {obj === 'perte' ? 'Perdre' : obj === 'prise' ? 'Prendre' : 'Maintien'}
-                           </button>
-                       ))}
+                 <div className="space-y-5">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                           <label className="text-xs font-bold text-slate-500 ml-1">{t.forms.gender}</label>
+                           <select className="w-full p-3 bg-slate-50 rounded-xl border-none shadow-sm focus:ring-2 focus:ring-teal-500" value={bodyMetrics.sexe} onChange={e=>setBodyMetrics({...bodyMetrics, sexe: e.target.value as any})}>
+                              <option value="homme">{t.forms.male}</option>
+                              <option value="femme">{t.forms.female}</option>
+                           </select>
+                        </div>
+                        <div>
+                           <label className="text-xs font-bold text-slate-500 ml-1">{t.forms.age}</label>
+                           <input type="number" className="w-full p-3 bg-slate-50 rounded-xl border-none shadow-sm" placeholder="Ex: 30" value={bodyMetrics.age} onChange={e=>setBodyMetrics({...bodyMetrics, age: e.target.value})}/>
+                        </div>
                     </div>
-                 </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                           <label className="text-xs font-bold text-slate-500 ml-1">{t.forms.weight}</label>
+                           <input type="number" className="w-full p-3 bg-slate-50 rounded-xl border-none shadow-sm" placeholder="kg" value={bodyMetrics.poids} onChange={e=>setBodyMetrics({...bodyMetrics, poids: e.target.value})}/>
+                        </div>
+                        <div>
+                           <label className="text-xs font-bold text-slate-500 ml-1">{t.forms.height}</label>
+                           <input type="number" className="w-full p-3 bg-slate-50 rounded-xl border-none shadow-sm" placeholder="cm" value={bodyMetrics.taille} onChange={e=>setBodyMetrics({...bodyMetrics, taille: e.target.value})}/>
+                        </div>
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 ml-1">{t.forms.activity}</label>
+                        <select className="w-full p-3 bg-slate-50 rounded-xl border-none shadow-sm" value={bodyMetrics.activite} onChange={e=>setBodyMetrics({...bodyMetrics, activite: e.target.value as any})}>
+                           <option value="sedentaire">{t.forms.sedentary}</option>
+                           <option value="actif">{t.forms.active}</option>
+                           <option value="sportif">{t.forms.athletic}</option>
+                        </select>
+                    </div>
 
-                 {/* NEW FREQUENCY SELECTOR */}
-                 <div className="p-3 border rounded-xl bg-slate-50">
-                    <label className="text-xs font-bold text-slate-500 uppercase mb-2 block flex items-center gap-2"><Dumbbell size={14}/> Activité Sportive</label>
-                    <select 
-                      className={`w-full ${darkInputClass}`}
-                      value={bodyMetrics.frequence_sport} 
-                      onChange={e => setBodyMetrics({...bodyMetrics, frequence_sport: e.target.value})}
-                    >
-                      <option value="0 jours/semaine">Aucun sport (Sédentaire)</option>
-                      <option value="1-2 jours/semaine">1-2 jours / semaine</option>
-                      <option value="3-4 jours/semaine">3-4 jours / semaine</option>
-                      <option value="5-6 jours/semaine">5-6 jours / semaine</option>
-                      <option value="7 jours/semaine">Tous les jours (Intense)</option>
-                    </select>
+                    {/* NEW PHOTO INPUT FOR BODY ANALYSIS */}
+                    <div className="mt-2">
+                        <label className="text-xs font-bold text-slate-500 ml-1">Photo (Visage/Corps) - Optionnel</label>
+                        <button 
+                            onClick={() => bodyPhotoInputRef.current?.click()} 
+                            className="w-full p-3 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 hover:text-teal-600 hover:border-teal-400 hover:bg-teal-50 transition-all flex items-center justify-center gap-2 text-sm font-medium"
+                        >
+                            <Camera size={18} /> {bodyPhoto ? "Photo sélectionnée" : "Ajouter une photo"}
+                        </button>
+                        <input type="file" ref={bodyPhotoInputRef} accept="image/*" className="hidden" onChange={handleBodyPhotoUpload} />
+                        {bodyPhoto && <p className="text-xs text-teal-600 mt-1 text-center font-semibold">{bodyPhoto.name}</p>}
+                    </div>
+                    
+                    <button onClick={handleBodyAnalysis} disabled={isProcessingSpec} className="w-full bg-teal-600 text-white py-3.5 rounded-xl font-bold shadow-lg shadow-teal-500/30 hover:-translate-y-0.5 transition-all mt-2">
+                      {isProcessingSpec ? <Loader2 className="animate-spin mx-auto"/> : t.forms.submit_body}
+                    </button>
+                    
+                    {bodyResult && (
+                       <div className="mt-4 p-5 bg-teal-50 rounded-2xl border border-teal-100 animate-fade-in shadow-sm">
+                          <div className="flex justify-between items-end mb-3">
+                             <span className="font-bold text-teal-800 text-xl">IMC: {bodyResult.imc}</span>
+                             <span className="text-xs text-teal-600 font-bold bg-white px-2 py-1 rounded-md shadow-sm">{bodyResult.masse_grasse_estimee} Fat</span>
+                          </div>
+                          <p className="text-sm text-teal-700 leading-relaxed">{bodyResult.interpretation}</p>
+                       </div>
+                    )}
+                    
+                    {/* Extra space at bottom to ensure visibility */}
+                    <div className="h-4"></div>
+                 </div>
+             </div>
+           </div>
+         </div>
+      )}
+
+      {/* 3. Nutrition Modal (Full Form) */}
+      {showNutritionModal && (
+         <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-4 sm:p-6">
+           <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl flex flex-col max-h-[80vh] relative animate-fade-in-up overflow-hidden z-[100]">
+             
+             <div className="absolute top-4 right-4 z-20">
+                <button onClick={() => setShowNutritionModal(false)} className="p-2 bg-slate-100/80 hover:bg-slate-200 rounded-full text-slate-500 transition-colors">
+                    <X size={20} />
+                </button>
+             </div>
+
+             <div className="overflow-y-auto p-6 sm:p-8 custom-scrollbar h-full">
+                 <div className="flex items-center gap-2 mb-6">
+                    <Utensils className="text-lime-600"/>
+                    <h3 className="font-bold text-lg">{t.modals.nutrition_title}</h3>
                  </div>
                  
-                 <button onClick={handleNutritionAnalysis} disabled={isProcessingSpec} className="w-full bg-lime-600 text-white py-3 rounded-xl font-bold flex justify-center hover:bg-lime-700 transition shadow-md">
-                    {isProcessingSpec ? <Loader2 className="animate-spin"/> : "Calculer le Plan"}
-                 </button>
-               </div>
-             ) : (
-               <div className="space-y-4 animate-fade-in">
-                  <div className="bg-lime-50 rounded-2xl p-4 text-center border border-lime-100 relative overflow-hidden">
-                    <div className="text-xs text-lime-600 font-bold uppercase mb-1">Cible Calorique Journalière</div>
-                    <div className="text-4xl font-black text-lime-700 tracking-tight">{nutritionResult.besoin_calorique_journalier} kcal</div>
-                    <div className="text-xs font-medium text-lime-800 bg-lime-200/50 inline-block px-2 py-1 rounded-lg mt-2">{nutritionResult.objectif_sante}</div>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                     <div className="bg-white p-2 rounded-xl border border-slate-100 shadow-sm">
-                        <div className="text-[10px] text-slate-400 uppercase font-bold">Protéines</div>
-                        <div className="font-bold text-slate-800 text-lg">{nutritionResult.proteines_g}g</div>
-                     </div>
-                     <div className="bg-white p-2 rounded-xl border border-slate-100 shadow-sm">
-                        <div className="text-[10px] text-slate-400 uppercase font-bold">Glucides</div>
-                        <div className="font-bold text-slate-800 text-lg">{nutritionResult.glucides_g}g</div>
-                     </div>
-                     <div className="bg-white p-2 rounded-xl border border-slate-100 shadow-sm">
-                        <div className="text-[10px] text-slate-400 uppercase font-bold">Lipides</div>
-                        <div className="font-bold text-slate-800 text-lg">{nutritionResult.lipides_g}g</div>
-                     </div>
-                  </div>
-
-                  <div className="bg-sky-50 p-3 rounded-xl flex items-center gap-3 border border-sky-100">
-                     <Droplets className="text-sky-500"/>
-                     <div>
-                        <div className="text-xs font-bold text-sky-400 uppercase">Hydratation</div>
-                        <div className="font-bold text-sky-800">{nutritionResult.eau_litres} par jour</div>
-                     </div>
-                  </div>
-
-                  <div className="bg-slate-50 border rounded-xl p-3">
-                     <span className="text-xs font-bold text-slate-400 uppercase flex items-center gap-1"><Lightbulb size={12}/> Conseil Nutrition</span>
-                     <p className="text-sm text-slate-600 mt-1 leading-snug">{nutritionResult.conseils_repas[0]}</p>
-                  </div>
-                  <button onClick={() => setNutritionResult(null)} className="w-full text-xs text-slate-400 hover:text-slate-600 mt-2 underline">Modifier les paramètres</button>
-               </div>
-             )}
-          </div>
-        </div>
+                 <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                        <input type="number" className="w-full p-3 bg-slate-50 rounded-xl border-none shadow-sm" placeholder={t.forms.weight} value={bodyMetrics.poids} onChange={e=>setBodyMetrics({...bodyMetrics, poids: e.target.value})}/>
+                        <input type="number" className="w-full p-3 bg-slate-50 rounded-xl border-none shadow-sm" placeholder={t.forms.height} value={bodyMetrics.taille} onChange={e=>setBodyMetrics({...bodyMetrics, taille: e.target.value})}/>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <input type="number" className="w-full p-3 bg-slate-50 rounded-xl border-none shadow-sm" placeholder={t.forms.age} value={bodyMetrics.age} onChange={e=>setBodyMetrics({...bodyMetrics, age: e.target.value})}/>
+                        <select className="w-full p-3 bg-slate-50 rounded-xl border-none shadow-sm" value={bodyMetrics.sexe} onChange={e=>setBodyMetrics({...bodyMetrics, sexe: e.target.value as any})}>
+                              <option value="homme">{t.forms.male}</option>
+                              <option value="femme">{t.forms.female}</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 ml-1">{t.forms.goal}</label>
+                        <select className="w-full p-3 bg-slate-50 rounded-xl border-none shadow-sm" value={bodyMetrics.objectif} onChange={e=>setBodyMetrics({...bodyMetrics, objectif: e.target.value as any})}>
+                           <option value="maintien">{t.forms.maintain}</option>
+                           <option value="perte">{t.forms.loss}</option>
+                           <option value="prise">{t.forms.gain}</option>
+                        </select>
+                    </div>
+                    
+                    <button onClick={handleNutritionAnalysis} disabled={isProcessingSpec} className="w-full bg-lime-600 text-white py-3.5 rounded-xl font-bold shadow-lg shadow-lime-500/30 hover:-translate-y-0.5 transition-all mt-4">
+                      {isProcessingSpec ? <Loader2 className="animate-spin mx-auto"/> : t.forms.submit_nutri}
+                    </button>
+                    
+                    {nutritionResult && (
+                       <div className="mt-4 p-5 bg-lime-50 rounded-2xl border border-lime-100 animate-fade-in shadow-sm">
+                          <div className="text-center mb-4">
+                             <span className="block text-4xl font-black text-lime-700 tracking-tighter">{nutritionResult.besoin_calorique_journalier}</span>
+                             <span className="text-xs uppercase font-bold text-lime-500 tracking-wide">kcal / jour</span>
+                          </div>
+                          <div className="flex justify-between text-xs font-bold text-slate-600 mb-2 px-2">
+                             <span>Prot: {nutritionResult.proteines_g}g</span>
+                             <span>Carb: {nutritionResult.glucides_g}g</span>
+                             <span>Fat: {nutritionResult.lipides_g}g</span>
+                          </div>
+                          <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden flex shadow-inner">
+                              <div className="bg-red-400 h-full" style={{width: '30%'}}></div>
+                              <div className="bg-amber-400 h-full" style={{width: '40%'}}></div>
+                              <div className="bg-blue-400 h-full" style={{width: '30%'}}></div>
+                          </div>
+                       </div>
+                    )}
+                    <div className="h-4"></div>
+                 </div>
+             </div>
+           </div>
+         </div>
       )}
 
-      {/* 2. Vision Modal */}
+      {/* 4. Vision Modal */}
       {showVisionModal && (
-        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-md p-6">
-             <div className="flex justify-between items-center mb-4">
-               <h3 className="text-xl font-bold flex items-center gap-2"><Eye className="text-indigo-600"/> Vision IA</h3>
-               <button onClick={() => setShowVisionModal(false)}><X size={24}/></button>
-             </div>
-             {!visionResult ? (
-                <div className="flex flex-col gap-4">
-                   <div className="p-8 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center gap-2 text-slate-400 cursor-pointer hover:bg-slate-50" onClick={() => visionInputRef.current?.click()}>
-                      {isProcessingSpec ? <Loader2 className="animate-spin" size={32}/> : <Camera size={32}/>}
-                      <span>Prendre photo/vidéo (10s)</span>
-                   </div>
-                   <input type="file" ref={visionInputRef} className="hidden" accept="image/*,video/*" onChange={handleVisionUpload} />
-                   <div className="text-xs text-slate-400 text-center">Analyse peau, respiration, motricité.</div>
-                </div>
-             ) : (
-                <div className="bg-indigo-50 rounded-2xl p-4 space-y-3">
-                   <div className="font-bold text-indigo-900">Gravité estimée: {visionResult.score_gravite}/5</div>
-                   <div className="text-sm">👀 {visionResult.respiration_visuelle}</div>
-                   <div className="text-sm">🩹 {visionResult.signes_cutanes}</div>
-                   <div className="text-xs text-indigo-400 mt-2">Données ajoutées à l'analyse globale.</div>
-                   
-                   <button 
-                     onClick={() => setVisionResult(null)} 
-                     className="w-full flex items-center justify-center gap-2 py-2 mt-2 bg-white text-indigo-600 rounded-xl text-sm font-bold border border-indigo-200 hover:bg-indigo-100 transition"
-                   >
-                      <RefreshCcw size={14}/> Nouvelle Analyse
-                   </button>
-                </div>
-             )}
+          <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-4 sm:p-6">
+            <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl flex flex-col max-h-[80vh] relative animate-fade-in-up overflow-hidden z-[100]">
+              <div className="absolute top-4 right-4 z-20">
+                <button onClick={() => setShowVisionModal(false)} className="p-2 bg-slate-100/80 hover:bg-slate-200 rounded-full text-slate-500 transition-colors">
+                    <X size={20} />
+                </button>
+              </div>
+
+              <div className="overflow-y-auto p-6 sm:p-8 custom-scrollbar h-full">
+                  <h3 className="font-bold mb-6 flex items-center gap-2"><Eye className="text-indigo-600"/> {t.modals.vision_title}</h3>
+                  <div className="space-y-6">
+                     <button onClick={()=>visionInputRef.current?.click()} className="w-full py-12 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center text-slate-400 hover:border-indigo-500 hover:text-indigo-500 hover:bg-indigo-50 transition-all group bg-slate-50">
+                         <Camera size={48} className="mb-2 group-hover:scale-110 transition-transform"/>
+                         <span className="font-bold">{t.modals.upload_doc}</span>
+                     </button>
+                     <input type="file" ref={visionInputRef} className="hidden" onChange={handleVisionUpload} />
+                     
+                     {isProcessingSpec && <div className="text-center py-4"><Loader2 className="animate-spin mx-auto text-indigo-500" size={32}/></div>}
+
+                     {visionResult && (
+                        <div className="p-6 bg-indigo-50 rounded-2xl text-indigo-900 border border-indigo-100 animate-fade-in shadow-sm">
+                           <h4 className="font-bold mb-3 text-lg">Analyse: {visionResult.signes_cutanes || visionResult.signes_trauma}</h4>
+                           <div className="flex gap-2 mb-3">
+                              <span className={`text-xs font-bold px-3 py-1.5 rounded-lg ${visionResult.score_gravite > 3 ? 'bg-red-200 text-red-900' : 'bg-green-200 text-green-900'}`}>Score: {visionResult.score_gravite}/5</span>
+                           </div>
+                           <p className="text-sm leading-relaxed">{visionResult.recommandations?.[0]}</p>
+                        </div>
+                     )}
+                     <div className="h-4"></div>
+                  </div>
+              </div>
+            </div>
           </div>
-        </div>
       )}
 
-      {/* 3. Audio Modal */}
+      {/* 5. Audio Modal (30s Timer) */}
       {showAudioModal && (
-        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-md p-6">
-             <div className="flex justify-between items-center mb-4">
-               <h3 className="text-xl font-bold flex items-center gap-2"><Waves className="text-sky-600"/> Audio IA</h3>
-               <button onClick={() => setShowAudioModal(false)}><X size={24}/></button>
-             </div>
-             {!audioSpecResult ? (
-                <div className="flex flex-col gap-4 items-center py-6">
-                   <button 
-                     onClick={handleAudioSpecRecord} 
-                     disabled={isProcessingSpec || isAudioSpecRecording} 
-                     className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all relative ${isAudioSpecRecording ? 'bg-red-500 scale-110' : 'bg-red-500 text-white hover:scale-105'}`}
-                   >
-                      {isProcessingSpec ? (
-                         <Loader2 className="animate-spin text-white" size={32}/>
-                      ) : isAudioSpecRecording ? (
-                         <>
-                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                           <span className="relative text-3xl font-bold text-white font-mono">{audioCountdown}</span>
-                         </>
-                      ) : (
-                         <Mic size={32}/>
-                      )}
-                   </button>
-                   <span className={`text-sm font-bold ${isAudioSpecRecording ? 'text-red-500 animate-pulse' : 'text-slate-500'}`}>
-                      {isAudioSpecRecording ? "Enregistrement en cours..." : "Appuyez pour enregistrer (5s)"}
-                   </span>
-                </div>
-             ) : (
-                <div className="bg-sky-50 rounded-2xl p-4 space-y-3">
-                   <div className="font-bold text-sky-900">Stress détecté: {audioSpecResult.score_stress}</div>
-                   <div className="text-sm">🫁 {audioSpecResult.rythme_respiratoire}</div>
-                   <div className="text-sm">🗣️ Fatigue vocale: {audioSpecResult.fatigue_vocale}</div>
-                   <div className="text-xs text-sky-400 mt-2">Données ajoutées à l'analyse globale.</div>
-                   
-                   <button 
-                     onClick={() => setAudioSpecResult(null)} 
-                     className="w-full flex items-center justify-center gap-2 py-2 mt-2 bg-white text-sky-600 rounded-xl text-sm font-bold border border-sky-200 hover:bg-sky-100 transition"
-                   >
-                      <RefreshCcw size={14}/> Recommencer
-                   </button>
-                </div>
-             )}
-          </div>
-        </div>
-      )}
-
-
-      {/* FIRST AID MODAL (Existing) */}
-      {showFirstAid && result?.premiers_secours_steps && (
-        <FirstAidModal 
-          steps={result.premiers_secours_steps} 
-          onClose={handleCloseFirstAid} 
-        />
-      )}
-
-      {/* SUGGESTION POPUP (POST-ANALYSIS) */}
-      {showSuggestionModal && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center pointer-events-none">
-          {/* Backdrop with pointer-events-auto to close when clicking outside if needed, here just transparent */}
-          <div className="absolute inset-0 bg-black/20 pointer-events-auto backdrop-blur-[2px]" onClick={() => setShowSuggestionModal(false)}></div>
-          
-          <div className="relative pointer-events-auto bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl p-6 w-full max-w-lg animate-fade-in-up border border-slate-200 m-0 sm:m-4">
-             <div className="flex justify-between items-start mb-4">
-                <div>
-                   <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                     <Sparkles className="text-amber-500" size={20}/> Compléter le bilan ?
-                   </h3>
-                   <p className="text-sm text-slate-500 mt-1">
-                     Affinez votre diagnostic avec ces modules spécialisés.
-                   </p>
-                </div>
-                <button onClick={() => setShowSuggestionModal(false)} className="bg-slate-100 p-2 rounded-full hover:bg-slate-200 transition">
-                  <X size={20} className="text-slate-500"/>
+         <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-4 sm:p-6">
+           <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl flex flex-col max-h-[80vh] relative animate-fade-in-up overflow-hidden text-center z-[100]">
+             <div className="absolute top-4 right-4 z-20">
+                <button onClick={() => setShowAudioModal(false)} className="p-2 bg-slate-100/80 hover:bg-slate-200 rounded-full text-slate-500 transition-colors">
+                    <X size={20} />
                 </button>
              </div>
-             
-             <div className="grid grid-cols-2 gap-3">
-                <button onClick={() => {setShowSuggestionModal(false); setShowBodyModal(true);}} className="p-3 rounded-2xl bg-slate-50 hover:bg-teal-50 border border-slate-100 hover:border-teal-200 transition text-left group">
-                   <Calculator className="text-teal-600 mb-2 group-hover:scale-110 transition-transform" size={24}/>
-                   <div className="text-sm font-bold text-slate-700">Corporel</div>
-                   <div className="text-[10px] text-slate-400">IMC, Santé</div>
-                </button>
-                <button onClick={() => {setShowSuggestionModal(false); setShowNutritionModal(true);}} className="p-3 rounded-2xl bg-slate-50 hover:bg-lime-50 border border-slate-100 hover:border-lime-200 transition text-left group">
-                   <Utensils className="text-lime-600 mb-2 group-hover:scale-110 transition-transform" size={24}/>
-                   <div className="text-sm font-bold text-slate-700">Alimentation</div>
-                   <div className="text-[10px] text-slate-400">Calories, Eau</div>
-                </button>
-                <button onClick={() => {setShowSuggestionModal(false); setShowVisionModal(true);}} className="p-3 rounded-2xl bg-slate-50 hover:bg-indigo-50 border border-slate-100 hover:border-indigo-200 transition text-left group">
-                   <Eye className="text-indigo-600 mb-2 group-hover:scale-110 transition-transform" size={24}/>
-                   <div className="text-sm font-bold text-slate-700">Vision IA</div>
-                   <div className="text-[10px] text-slate-400">Peau, Trauma</div>
-                </button>
-                <button onClick={() => {setShowSuggestionModal(false); setShowAudioModal(true);}} className="p-3 rounded-2xl bg-slate-50 hover:bg-sky-50 border border-slate-100 hover:border-sky-200 transition text-left group">
-                   <Waves className="text-sky-600 mb-2 group-hover:scale-110 transition-transform" size={24}/>
-                   <div className="text-sm font-bold text-slate-700">Audio IA</div>
-                   <div className="text-[10px] text-slate-400">Stress, Souffle</div>
-                </button>
+
+             <div className="overflow-y-auto p-6 sm:p-8 custom-scrollbar h-full">
+                 <h3 className="font-bold mb-8 flex items-center justify-center gap-2"><Waves className="text-sky-500"/> {t.modals.audio_title}</h3>
+                 
+                 <div className="relative w-40 h-40 mx-auto mb-8 flex items-center justify-center">
+                     {/* Progress Ring */}
+                     <svg className="absolute inset-0 w-full h-full -rotate-90">
+                        <circle cx="80" cy="80" r="70" stroke="#f1f5f9" strokeWidth="10" fill="none" />
+                        <circle 
+                          cx="80" cy="80" r="70" 
+                          stroke="#0ea5e9" strokeWidth="10" fill="none" 
+                          strokeDasharray="440" 
+                          strokeDashoffset={440 - (440 * audioTimer) / 30}
+                          className="transition-all duration-1000 ease-linear"
+                          strokeLinecap="round"
+                        />
+                     </svg>
+                     
+                     {isAudioSpecRecording ? (
+                         <div className="text-4xl font-black text-sky-600 animate-pulse">{30 - audioTimer}s</div>
+                     ) : (
+                         <button onClick={handleAudioSpecRecord} disabled={isProcessingSpec} className="w-24 h-24 bg-gradient-to-br from-sky-400 to-sky-600 hover:from-sky-500 hover:to-sky-700 rounded-full flex items-center justify-center text-white shadow-xl hover:scale-105 transition-all z-10 active:scale-95">
+                            {isProcessingSpec ? <Loader2 className="animate-spin" size={32}/> : <Mic size={36}/>}
+                         </button>
+                     )}
+                 </div>
+
+                 {isAudioSpecRecording && (
+                    <button onClick={stopAudioSpecRecordEarly} className="mb-6 px-6 py-2.5 bg-red-100 text-red-600 rounded-full font-bold text-sm hover:bg-red-200 transition-colors flex items-center gap-2 mx-auto shadow-sm">
+                       <StopCircle size={18}/> {t.modals.stop_early}
+                    </button>
+                 )}
+                 
+                 {audioSpecResult && (
+                     <div className="p-6 bg-sky-50 rounded-2xl text-left border border-sky-100 animate-fade-in shadow-sm">
+                        <div className="flex justify-between items-center mb-3">
+                           <span className="font-bold text-sky-900 text-lg">Stress: {audioSpecResult.score_stress}</span>
+                           <span className="text-xs bg-white px-3 py-1 rounded-full text-sky-600 border border-sky-200 font-bold">{audioSpecResult.rythme_respiratoire}</span>
+                        </div>
+                        <ul className="text-sm text-sky-700 list-disc list-inside space-y-1">
+                           {audioSpecResult.recommandations?.slice(0,2).map((r,i)=><li key={i}>{r}</li>)}
+                        </ul>
+                     </div>
+                 )}
+                 <div className="h-4"></div>
              </div>
-             
-             <button onClick={() => setShowSuggestionModal(false)} className="w-full mt-4 py-3 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition">
-                Non merci, c'est tout
-             </button>
-          </div>
-        </div>
+           </div>
+         </div>
       )}
 
-      {/* Header */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 shadow-sm transition-all duration-300">
-        <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between relative">
+      {/* --- Header --- */}
+      <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 flex-shrink-0 z-40 h-16 flex items-center justify-between px-4 sticky top-0">
           <div className="flex items-center gap-3 cursor-pointer group" onClick={resetAnalysis}>
-            <div className="w-10 h-10 bg-gradient-to-br from-teal-500 to-teal-700 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-teal-500/20 group-hover:scale-105 transition-transform duration-300">
+            <div className="w-10 h-10 bg-gradient-to-br from-teal-500 to-teal-700 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-teal-500/20 group-hover:scale-105 transition-transform">
               <Shield size={24} strokeWidth={2.5} />
             </div>
             <div>
-              <h1 className="font-bold text-xl text-slate-800 tracking-tight leading-none">Vitalia</h1>
-              <span className="text-[10px] text-teal-600 font-medium tracking-wide mt-0.5 block">
-                L'expertise clinique instantanée
-              </span>
+              <h1 className="font-bold text-xl text-slate-800 tracking-tight leading-none">{t.title}</h1>
+              <span className="text-[10px] text-teal-600 font-medium tracking-wide mt-0.5 block">{t.subtitle}</span>
             </div>
           </div>
-
-          <button
-            onClick={resetAnalysis}
-            className="absolute right-4 top-1/2 -translate-y-1/2 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 p-2.5 rounded-full bg-slate-50 text-slate-400 hover:bg-white hover:text-teal-600 hover:shadow-md border border-transparent hover:border-slate-100 transition-all duration-300"
-            title="Retour à l'accueil"
-          >
-            <Home size={22} strokeWidth={2} />
-          </button>
-        </div>
+          <div className="flex items-center gap-2">
+             <button onClick={() => setShowOfflineMenu(true)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 ${isOnline ? 'bg-red-50 text-red-600 border border-red-100 hover:bg-red-100' : 'bg-red-600 text-white border-red-600 animate-pulse'}`}>
+                <HeartPulse size={14} fill={!isOnline ? "currentColor" : "none"}/>
+             </button>
+             <button onClick={toggleLanguage} className="flex items-center gap-1 bg-white px-2 py-1 rounded-full text-[9px] font-bold text-slate-600 hover:bg-slate-50 transition-all capitalize shadow-sm border border-slate-100 hover:shadow-md hover:-translate-y-px h-auto">
+                <Globe size={10}/> {language}
+             </button>
+          </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 mt-8">
-        
-        {status !== 'done' && (
-          <div className="max-w-3xl mx-auto animate-fade-in">
-            {/* Disclaimer */}
-            <div className="bg-gradient-to-br from-white to-blue-50/50 border border-blue-100 rounded-3xl p-6 mb-8 shadow-xl shadow-blue-500/5 relative overflow-hidden">
-              <div className="relative z-10 flex items-start gap-3">
-                <BrainCircuit size={28} className="text-indigo-600 mt-1"/>
-                <div>
-                    <h2 className="text-blue-900 font-bold mb-1 text-lg">
-                    IA Médicale Haute Performance
-                    </h2>
-                    <p className="text-blue-800/70 text-sm leading-relaxed">
-                    <strong>boosté par le nouveau modèle de Gemini</strong> : Analyse instantanée, vision X-Ray et détection OCR des traitements.
-                    <br/><span className="inline-block mt-2 font-semibold text-blue-900 bg-blue-100/50 px-2 py-0.5 rounded-md text-xs">⚠️ En cas d'urgence vitale, faites le 15.</span>
-                    </p>
-                </div>
-              </div>
-            </div>
-
-            {/* INTERVIEW MODE (ONE BY ONE) */}
-            {status === 'interviewing' ? (
-               <div className="bg-white p-8 rounded-3xl shadow-2xl shadow-teal-900/10 border border-teal-100 animate-fade-in-up transform transition-all relative overflow-hidden">
-                 
-                 {/* Progress Bar */}
-                 <div className="absolute top-0 left-0 w-full h-1 bg-slate-100">
-                    <div className="h-full bg-teal-500 transition-all duration-500 ease-out" style={{width: `${intakeProgress}%`}}></div>
-                 </div>
-
-                 <div className="flex flex-col items-center text-center mt-4 mb-8">
-                    <div className="w-16 h-16 bg-teal-100 text-teal-600 rounded-full flex items-center justify-center mb-4 shadow-inner animate-pulse">
-                       <MessageCircleQuestion size={32} />
-                    </div>
-                    <p className="text-slate-400 uppercase text-xs font-bold tracking-widest mb-2">
-                       TRIAGE INTERACTIF • QUESTION {currentQuestionIndex + 1}/{interviewQuestions.length}
-                    </p>
-                    <h3 className="text-2xl font-bold text-slate-800 leading-tight max-w-lg mx-auto">
-                      {interviewQuestions[currentQuestionIndex]}
-                    </h3>
-                 </div>
-                 
-                 <div className="w-full max-w-xl mx-auto">
-                   <input
-                      type="text"
-                      className="w-full p-5 bg-slate-50 border-2 border-slate-200 rounded-2xl focus:border-teal-500 focus:bg-white focus:ring-4 focus:ring-teal-500/10 outline-none text-slate-800 text-lg transition-all mb-4 text-center"
-                      placeholder="Tapez votre réponse ici..."
-                      autoFocus
-                      value={currentAnswer}
-                      onChange={(e) => setCurrentAnswer(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleNextQuestion()}
-                   />
-
-                   <button 
-                      onClick={handleNextQuestion}
-                      disabled={!currentAnswer.trim()}
-                      className="w-full bg-teal-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-teal-700 transition-all flex items-center justify-center gap-2 shadow-lg hover:shadow-xl active:scale-[0.98] disabled:opacity-50 disabled:shadow-none"
-                   >
-                      {currentQuestionIndex === interviewQuestions.length - 1 ? "Terminer & Analyser" : "Question Suivante"} <ArrowRight size={20} />
-                   </button>
-                   
-                   <p className="text-center text-xs text-slate-400 mt-4">
-                     Répondez précisément pour un diagnostic fiable.
-                   </p>
-                 </div>
+      {/* --- Main Content Area (Scrollable Feed) --- */}
+      <main className="flex-1 overflow-y-auto p-4 pb-32 scroll-smooth">
+         <div className="max-w-3xl mx-auto min-h-full flex flex-col justify-end">
+            
+            {status === 'idle' && (
+               <div className="flex flex-col items-center justify-center flex-1 py-12 text-center space-y-8 h-full">
+                  <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-[0_0_40px_rgba(20,184,166,0.2)] mb-4">
+                     <Stethoscope size={48} className="text-teal-600" />
+                  </div>
+                  <div className="space-y-2 max-w-md">
+                     <h2 className="text-2xl font-bold text-slate-800">Bonjour.</h2>
+                     <p className="text-slate-500 font-medium leading-relaxed">{t.disclaimer.text}</p>
+                     <p className="text-xs text-slate-400 bg-slate-100 px-3 py-1 rounded-full inline-block mt-4">
+                        {t.disclaimer.emergency}
+                     </p>
+                  </div>
                </div>
-            ) : (
-              /* STANDARD INPUT FORM */
-              <div className="space-y-8">
-                
-                {/* Mode Selectors */}
-                <div className="grid grid-cols-3 gap-3">
-                   {['adult', 'child', 'sport'].map((m) => (
-                       <button 
-                       key={m}
-                       type="button" 
-                       onClick={() => setMode(m as AppMode)}
-                       className={`p-4 rounded-2xl border-2 flex flex-col items-center gap-2 transition-all ${mode === m 
-                           ? (m === 'child' ? 'border-pink-500 bg-pink-50 text-pink-800' : m === 'sport' ? 'border-orange-500 bg-orange-50 text-orange-800' : 'border-teal-500 bg-teal-50 text-teal-800')
-                           : 'border-slate-100 bg-white text-slate-400 hover:border-slate-200'}`}
-                     >
-                       {m === 'adult' ? <User size={24} /> : m === 'child' ? <Baby size={24} /> : <Activity size={24} />}
-                       <span className="text-xs font-bold uppercase">{m === 'child' ? 'Enfant' : m === 'sport' ? 'Sport' : 'Adulte'}</span>
-                     </button>
-                   ))}
-                </div>
-
-                {/* Symptoms + NEW QUICK ANALYZE BUTTON */}
-                <div className="bg-white p-1 rounded-3xl shadow-lg shadow-slate-200/50 border-2 border-indigo-50 hover:border-indigo-100 transition-all duration-300 relative group">
-                  <div className="bg-slate-50/50 p-6 rounded-[20px] pb-16 relative">
-                    <label className="block text-lg font-bold text-slate-800 mb-3 ml-1 flex items-center gap-2">
-                        <MessageCircleQuestion className="text-indigo-500" size={20} />
-                        Décrivez vos symptômes
-                    </label>
-                    <textarea 
-                        className="w-full h-40 p-5 bg-white border-2 border-slate-200 rounded-2xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all resize-none text-slate-700 placeholder:text-slate-400 text-lg shadow-inner"
-                        placeholder={mode === 'child' ? "Fièvre ? Comportement ? Douleur ?" : "Soyez précis : Âge, Durée, Intensité, Localisation..."}
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value)}
-                        disabled={status === 'analyzing'}
-                    />
-                    
-                    {/* NEW: Quick Analyze Button embedded in the Text Area */}
-                    <div className="absolute bottom-4 left-0 w-full px-6 flex justify-center md:justify-end">
-                        <button 
-                            onClick={handleQuickAnalysis}
-                            disabled={status === 'analyzing' || description.length < 5}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {status === 'analyzing' && analysisSource === 'quick' ? (
-                                <>
-                                  <Loader2 className="animate-spin" size={16} /> Analyse...
-                                </>
-                            ) : (
-                                <>
-                                  <Sparkles size={16} /> Analyser les symptômes
-                                </>
-                            )}
-                        </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Section Header */}
-                <div className="pt-2">
-                  <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                    <Layers className="text-teal-500" size={20}/>
-                    Dites-nous en plus 
-                    <span className="text-sm font-normal text-slate-500 ml-2">(Optionnel)</span>
-                  </h3>
-                  
-                  {/* Medications Input with Intelligent OCR */}
-                  <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 mb-6">
-                      <label className="text-sm font-bold text-slate-700 uppercase tracking-wide ml-2 mb-2 flex items-center gap-2">
-                        <Pill size={16} className="text-teal-500" />
-                        Traitements en cours
-                      </label>
-                      <div className="flex gap-2">
-                        <div className="relative flex-1">
-                          <input 
-                              type="text" 
-                              value={currentMeds}
-                              onChange={(e) => setCurrentMeds(e.target.value)}
-                              placeholder="Ex: Doliprane 1000mg..."
-                              className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-200 focus:outline-none focus:border-teal-500 text-slate-700 pr-10"
-                          />
-                           {isScanningMeds && (
-                              <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                                  <Loader2 className="animate-spin text-teal-600" size={20} />
-                              </div>
-                           )}
-                        </div>
-                        
-                        <button 
-                           type="button"
-                           onClick={() => medScanRef.current?.click()}
-                           className={`px-4 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-2xl transition-colors flex flex-col items-center justify-center gap-1 border border-indigo-100 min-w-[80px] ${isScanningMeds ? 'opacity-50 cursor-not-allowed' : ''}`}
-                           title="Scanner ordonnance ou boîte"
-                           disabled={isScanningMeds}
-                        >
-                           <ScanLine size={20} />
-                           <span className="text-[10px] font-bold uppercase">Scanner</span>
-                        </button>
-                        <input 
-                          type="file" 
-                          accept="image/*" 
-                          className="hidden" 
-                          ref={medScanRef} 
-                          onChange={handleMedScan}
-                        />
-                      </div>
-                  </div>
-
-                  {/* Multimodal Input */}
-                  <div className="space-y-4 mb-6">
-                     <label className="text-sm font-bold text-slate-700 uppercase tracking-wide ml-2 flex items-center gap-2">
-                        <Camera size={16} className="text-teal-500" />
-                        Photos & Audio (Blessures, Peau, Documents...)
-                     </label>
-                     
-                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                        {/* ADD BUTTON */}
-                        <div 
-                          onClick={() => status !== 'analyzing' && fileInputRef.current?.click()}
-                          className={`aspect-square rounded-2xl border-2 border-dashed border-slate-300 transition-all flex flex-col items-center justify-center gap-3 group bg-slate-50 cursor-pointer hover:border-teal-500 hover:bg-teal-50/50`}
-                        >
-                           <div className="w-12 h-12 rounded-full bg-white shadow-sm border border-slate-100 group-hover:scale-110 transition-transform flex items-center justify-center text-slate-400 group-hover:text-teal-500">
-                             <Plus size={24} strokeWidth={3} />
-                           </div>
-                           <span className="text-xs font-bold text-slate-500 group-hover:text-teal-600 uppercase">Ajouter</span>
-                        </div>
-
-                        {/* RECORD BUTTON */}
-                        <div 
-                          onClick={isRecording ? stopRecording : startRecording}
-                          className={`aspect-square rounded-2xl border-2 border-dashed transition-all flex flex-col items-center justify-center gap-3 cursor-pointer ${isRecording ? 'border-red-500 bg-red-50' : 'border-slate-300 bg-slate-50 hover:border-teal-500 hover:bg-teal-50/50'}`}
-                        >
-                           <div className={`w-12 h-12 rounded-full shadow-sm border flex items-center justify-center transition-all ${isRecording ? 'bg-red-500 text-white scale-110 animate-pulse border-red-500' : 'bg-white border-slate-100 text-slate-400'}`}>
-                             {isRecording ? <Square size={20} fill="currentColor" /> : <Mic size={24} strokeWidth={3} />}
-                           </div>
-                           <span className={`text-xs font-bold uppercase ${isRecording ? 'text-red-500' : 'text-slate-500'}`}>
-                             {isRecording ? 'Stop' : 'Vocal'}
-                           </span>
-                        </div>
-
-                        <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" multiple accept="image/*,video/*,audio/*,.pdf" />
-
-                        {/* FILE PREVIEWS */}
-                        {files.map((file, index) => (
-                          <div key={index} className="aspect-square rounded-2xl border border-slate-200 bg-white relative overflow-hidden shadow-sm group">
-                            {file.type === 'image' ? (
-                              <img src={file.preview} alt="preview" className="w-full h-full object-cover" />
-                            ) : (
-                              <div className="w-full h-full flex flex-col items-center justify-center gap-2 p-2">
-                                 {file.type === 'audio' ? <Mic className="text-teal-500" size={24}/> : <FileText className="text-slate-400" size={24}/>}
-                              </div>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => removeFile(index)}
-                              className="absolute top-1 right-1 p-1 bg-white/90 rounded-full text-slate-500 hover:text-red-500 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        ))}
-                     </div>
-                     
-                     {/* Voice Result Card */}
-                     {(isAnalyzingVoice || voiceResult) && (
-                        <div className="mt-4 bg-indigo-50 rounded-2xl p-4 border border-indigo-100 animate-fade-in shadow-sm">
-                            <div className="flex items-center gap-2 mb-3 text-indigo-800 font-bold text-sm uppercase">
-                                {isAnalyzingVoice ? <Loader2 className="animate-spin text-indigo-600" size={16} /> : <Activity className="text-indigo-600" size={16} />}
-                                {isAnalyzingVoice ? "Analyse vocale..." : "Résultat Audio"}
-                            </div>
-                            {!isAnalyzingVoice && voiceResult && (
-                                <div className="text-sm text-slate-700 bg-white p-3 rounded-xl border border-indigo-100 italic">
-                                    "{voiceResult.transcription}"
-                                </div>
-                            )}
-                        </div>
-                     )}
-                  </div>
-
-                  {/* --- NEW SPECIALIZED MODULES BUTTONS --- */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 py-2 w-full">
-                      <button onClick={() => setShowBodyModal(true)} className={`w-full px-4 py-3 rounded-xl flex items-center justify-center gap-2 bg-slate-100 hover:bg-teal-100 text-slate-600 hover:text-teal-700 transition-colors shadow-sm font-semibold text-xs border border-slate-200 ${mode === 'child' ? 'hover:bg-pink-100 hover:text-pink-700' : mode === 'sport' ? 'hover:bg-orange-100 hover:text-orange-700' : ''}`}>
-                         <Calculator size={18} className="flex-shrink-0"/> <span className="truncate">Analyse Corporelle</span>
-                      </button>
-                      <button onClick={() => setShowNutritionModal(true)} className={`w-full px-4 py-3 rounded-xl flex items-center justify-center gap-2 bg-slate-100 hover:bg-lime-100 text-slate-600 hover:text-lime-700 transition-colors shadow-sm font-semibold text-xs border border-slate-200`}>
-                         <Utensils size={18} className="flex-shrink-0"/> <span className="truncate">Alimentation</span>
-                      </button>
-                      <button onClick={() => setShowVisionModal(true)} className={`w-full px-4 py-3 rounded-xl flex items-center justify-center gap-2 bg-slate-100 hover:bg-indigo-100 text-slate-600 hover:text-indigo-700 transition-colors shadow-sm font-semibold text-xs border border-slate-200`}>
-                         <Eye size={18} className="flex-shrink-0"/> <span className="truncate">Analyse Vision IA</span>
-                      </button>
-                      <button onClick={() => setShowAudioModal(true)} className={`w-full px-4 py-3 rounded-xl flex items-center justify-center gap-2 bg-slate-100 hover:bg-sky-100 text-slate-600 hover:text-sky-700 transition-colors shadow-sm font-semibold text-xs border border-slate-200`}>
-                         <Waves size={18} className="flex-shrink-0"/> <span className="truncate">Analyse Audio IA</span>
-                      </button>
-                  </div>
-                </div>
-
-                {/* FULL Analyze Button */}
-                <div className="space-y-3">
-                    <button
-                    onClick={handleFullAnalysis}
-                    disabled={status === 'analyzing' || !canLaunchFullAnalysis}
-                    className={`w-full py-5 rounded-2xl font-bold text-lg shadow-lg transition-all flex items-center justify-center gap-3 
-                        ${canLaunchFullAnalysis 
-                            ? 'bg-slate-900 hover:bg-slate-800 text-white hover:shadow-xl hover:scale-[1.01] active:scale-[0.99]' 
-                            : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
-                    >
-                    {status === 'analyzing' && analysisSource === 'full' ? (
-                        <>
-                        <Loader2 className="animate-spin" /> Analyse Complète en cours...
-                        </>
-                    ) : (
-                        <>
-                        {canLaunchFullAnalysis ? <Shield size={22} /> : <Lock size={20} />} 
-                        Lancer l'Analyse Complète
-                        </>
-                    )}
-                    </button>
-                    
-                    {!canLaunchFullAnalysis && (
-                        <p className="text-center text-xs text-slate-400 font-medium">
-                            Nécessite <span className="font-bold">Photos/Audio</span> ET <span className="font-bold">Traitements</span> remplis. Sinon, utilisez "Analyser les symptômes" plus haut.
-                        </p>
-                    )}
-                </div>
-
-                {error && (
-                  <div className="p-4 bg-red-50 text-red-600 rounded-2xl text-center text-sm font-bold border border-red-100 flex items-center justify-center gap-2 animate-pulse">
-                    <X size={16} /> {error}
-                  </div>
-                )}
-              </div>
             )}
-          </div>
-        )}
 
-        {status === 'done' && result && (
-          <AnalysisResult data={result} />
-        )}
+            {status === 'analyzing' && (
+                <div className="flex flex-col items-center justify-center py-12 space-y-4 animate-fade-in">
+                   <div className="relative">
+                      <div className="w-16 h-16 rounded-full border-4 border-slate-100 border-t-teal-500 animate-spin"></div>
+                      <Sparkles className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-teal-500" size={24} />
+                   </div>
+                   <p className="text-slate-500 font-medium animate-pulse">{t.main_action.analyzing}</p>
+                </div>
+            )}
+
+            {status === 'interviewing' && (
+               <div className="bg-white p-6 rounded-3xl shadow-xl border border-teal-100 animate-fade-in-up my-4">
+                  <div className="flex items-center gap-3 mb-4 text-teal-600">
+                     <MessageCircleQuestion size={24} />
+                     <span className="font-bold text-sm uppercase tracking-wider">{t.intake.title}</span>
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-800 mb-6">{interviewQuestions[currentQuestionIndex]}</h3>
+                  <div className="flex gap-2">
+                     <input 
+                        type="text" 
+                        autoFocus
+                        value={currentAnswer}
+                        onChange={(e) => setCurrentAnswer(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleNextQuestion()}
+                        className="flex-1 bg-slate-50 border-none shadow-inner rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-teal-500 transition-all"
+                        placeholder={t.intake.placeholder}
+                     />
+                     <button onClick={handleNextQuestion} disabled={!currentAnswer.trim()} className="bg-teal-600 text-white p-3 rounded-xl disabled:opacity-50 hover:bg-teal-700 shadow-lg shadow-teal-500/30 hover:-translate-y-0.5 transition-all">
+                        <ArrowRight size={24} />
+                     </button>
+                  </div>
+                  <div className="w-full bg-slate-100 h-1 mt-6 rounded-full overflow-hidden">
+                     <div className="h-full bg-teal-500 transition-all duration-300" style={{ width: `${((currentQuestionIndex) / interviewQuestions.length) * 100}%` }}></div>
+                  </div>
+               </div>
+            )}
+
+            {status === 'done' && result && (
+               <div className="animate-fade-in-up pb-8">
+                  <div className="bg-slate-800 text-white px-4 py-2 rounded-t-3xl rounded-br-3xl inline-block text-sm font-bold mb-4 shadow-lg shadow-slate-800/20">
+                     Vitalia Analysis
+                  </div>
+                  <AnalysisResult data={result} language={language} autoPlay={autoPlayResponse} />
+                  
+                  {/* Suggestion to continue conversation */}
+                  <div className="mt-8 text-center">
+                     <button onClick={resetAnalysis} className="text-slate-400 text-sm hover:text-teal-600 flex items-center justify-center gap-2 mx-auto transition-colors">
+                        <RotateCcw size={16} /> Nouvelle analyse
+                     </button>
+                  </div>
+               </div>
+            )}
+            
+            {error && (
+               <div className="p-4 bg-red-50 text-red-600 rounded-2xl border border-red-100 flex items-center gap-3 my-4 animate-shake shadow-sm">
+                  <AlertTriangle size={20} />
+                  <span className="font-bold text-sm">{error}</span>
+               </div>
+            )}
+
+         </div>
       </main>
-      
-      {/* Floating Chat Bot */}
-      <ChatBot />
+
+      {/* --- Bottom Conversation Bar --- */}
+      <div className="flex-shrink-0 bg-white border-t border-slate-200 p-4 pb-8 md:pb-4 relative z-50">
+         <div className="max-w-3xl mx-auto relative">
+             
+             {/* Mode Selector (Above Bar) */}
+             <div className="absolute bottom-full left-0 mb-14 flex gap-3 origin-bottom-left px-2">
+                {['adult', 'child', 'sport'].map((m) => (
+                   <button 
+                     key={m} 
+                     onClick={() => setMode(m as AppMode)}
+                     className={`px-4 py-2 rounded-2xl text-[11px] font-bold capitalize transition-all hover:-translate-y-1 ${mode === m 
+                        ? (m === 'child' ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-lg shadow-pink-500/30' : m === 'sport' ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/30' : 'bg-gradient-to-r from-teal-500 to-emerald-600 text-white shadow-lg shadow-teal-500/30')
+                        : 'bg-white text-slate-600 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] border-none ring-0'}`}
+                   >
+                     {t.modes[m as AppMode]}
+                   </button>
+                ))}
+             </div>
+
+             {/* Context Chips (Files, Meds) */}
+             <div className="flex-1 flex flex-col items-center gap-2 mb-2">
+                {files.map((f, i) => (
+                   <div key={i} className="flex items-center gap-1 bg-slate-100 px-2 py-1 rounded-lg text-xs font-medium text-slate-600 shadow-sm animate-scale-in">
+                      <Paperclip size={12} /> 
+                      <span className="max-w-[100px] truncate">{f.file.name}</span>
+                      {f.type === 'image' && (
+                        <button onClick={() => toggleFileFlip(i)} className="hover:text-teal-600 ml-1" title="Flip Image">
+                            <RefreshCw size={10} className={flippedFiles[i] ? "text-teal-600" : ""} />
+                        </button>
+                      )}
+                      <button onClick={() => removeFile(i)} className="hover:text-red-500 ml-1"><X size={12}/></button>
+                      {f.type === 'image' && flippedFiles[i] && (
+                        <style>{`
+                            /* Apply flip to preview if shown elsewhere, though mostly specific to video feeds */
+                        `}</style>
+                      )}
+                   </div>
+                ))}
+                {scannedMedsList.map((m, i) => (
+                   <div key={i} className="flex items-center gap-1 bg-indigo-50 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 shadow-sm animate-scale-in border border-indigo-100">
+                      <Pill size={12} /> {m.nom.substring(0, 10)}... <button onClick={() => handleRemoveMed(i)} className="hover:text-red-500"><X size={12}/></button>
+                   </div>
+                ))}
+                {medsList.map((m, i) => (
+                   <div key={i} className="flex items-center gap-1 bg-indigo-50 px-2 py-1 rounded-lg text-xs font-medium text-indigo-600 shadow-sm animate-scale-in border border-indigo-100">
+                      <Pill size={12} /> {m} <button onClick={() => setMedsList(prev => prev.filter((_, idx) => idx !== i))} className="hover:text-red-500"><X size={12}/></button>
+                   </div>
+                ))}
+             </div>
+
+             {/* Tools Menu Popover */}
+             {showToolsMenu && (
+                 <>
+                     <div className="fixed inset-0 z-[60] bg-black/5" onClick={() => setShowToolsMenu(false)}></div>
+                     {renderToolsMenu()}
+                 </>
+             )}
+
+             {/* Input Bar */}
+             <div className="flex items-center gap-3 bg-slate-50 p-1.5 rounded-[26px] shadow-[0_2px_15px_rgba(0,0,0,0.05)] focus-within:shadow-[0_4px_20px_rgba(20,184,166,0.15)] focus-within:ring-1 focus-within:ring-teal-100 transition-all border border-slate-100">
+                
+                <button 
+                  onClick={() => setShowToolsMenu(!showToolsMenu)} 
+                  className={`p-3 rounded-full flex-shrink-0 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 ${showToolsMenu ? 'bg-slate-200 rotate-45 text-slate-600' : 'bg-white text-slate-600 hover:bg-slate-100'}`}
+                >
+                   <Plus size={24} strokeWidth={3} />
+                </button>
+
+                <div className="flex-1 relative">
+                   <textarea
+                     ref={textareaRef}
+                     value={description}
+                     onChange={(e) => setDescription(e.target.value)}
+                     onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                           e.preventDefault();
+                           handleSendMessage();
+                        }
+                     }}
+                     placeholder={status === 'interviewing' ? t.intake.placeholder : (mode === 'child' ? t.symptoms.placeholder_child : t.symptoms.placeholder_adult)}
+                     className="w-full bg-transparent outline-none text-slate-800 placeholder:text-slate-400 resize-none max-h-24 text-base leading-normal py-2 px-2"
+                     rows={1}
+                     disabled={status === 'analyzing' || status === 'interviewing'}
+                   />
+                </div>
+
+                <div className="flex items-center gap-2">
+                    <button 
+                       onClick={status === 'interviewing' ? handleNextQuestion : handleSendMessage} 
+                       disabled={status === 'analyzing' || (!description.trim() && files.length === 0 && medsList.length === 0 && scannedMedsList.length === 0)}
+                       className={`p-3 rounded-full transition-all duration-200 ${
+                          status === 'analyzing' || (!description.trim() && files.length === 0 && medsList.length === 0 && scannedMedsList.length === 0)
+                          ? 'bg-slate-200 text-slate-400 shadow-none cursor-not-allowed' 
+                          : 'bg-gradient-to-r from-teal-500 to-emerald-600 text-white shadow-lg shadow-teal-500/30 hover:shadow-xl hover:-translate-y-0.5 active:scale-95'
+                       }`}
+                    >
+                       {status === 'analyzing' ? <Loader2 size={24} className="animate-spin" /> : <Send size={24} className="ml-0.5" />}
+                    </button>
+                </div>
+             </div>
+             
+             {/* Extra mini-text for meds input if user types specific med names not in description */}
+             {currentMeds && (
+                 <div className="absolute top-full right-4 mt-2 bg-indigo-600 text-white text-xs px-3 py-1 rounded-full cursor-pointer hover:bg-indigo-700 animate-fade-in-up flex items-center gap-1 shadow-md hover:-translate-y-0.5 transition-transform" onClick={addMedFromInput}>
+                    <Plus size={12}/> Ajouter "{currentMeds}" aux traitements
+                 </div>
+             )}
+         </div>
+      </div>
+
     </div>
   );
 };

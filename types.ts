@@ -1,5 +1,7 @@
 
 
+export type Language = 'fr' | 'en' | 'ro';
+
 export interface Hypothesis {
   cause: string;
   probabilite: string;
@@ -57,12 +59,12 @@ export interface VoiceAnalysisResult {
 
 export interface BodyMetrics {
   age: string;
-  sexe: 'homme' | 'femme';
+  sexe: 'homme' | 'femme' | 'male' | 'female' | 'barbat' | 'femeie';
   poids: string;
   taille: string;
-  activite: 'sedentaire' | 'actif' | 'sportif'; // Legacy compatibility
-  frequence_sport: string; // New precise frequency
-  objectif: 'perte' | 'maintien' | 'prise'; // New goal
+  activite: 'sedentaire' | 'actif' | 'sportif' | 'sedentary' | 'active' | 'athletic' | 'sedentar' | 'activ'; 
+  frequence_sport: string; 
+  objectif: 'perte' | 'maintien' | 'prise' | 'loss' | 'maintain' | 'gain' | 'slabire' | 'mentinere' | 'crestere'; 
   tabac: boolean;
 }
 
@@ -110,6 +112,7 @@ export interface AudioSpecificAnalysisResult {
 export interface ScannedMedicationResult {
   nom: string;
   description: string;
+  usage_principal: string;
   conseils: string[];
   avertissements: string;
 }
